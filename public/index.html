@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Madura Logger</title>
+  <link rel="icon" href="/favicon.png" type="image/png">
+  <link rel="apple-touch-icon" href="/logo.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap">
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/theme.js"></script>
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="wrap">
+      <div class="topbar__row">
+        <a class="brand" href="/">
+          <img class="brand__mark" src="/logo.png" width="36" height="36" alt="">
+          <span class="brand__name">Madura Logger</span>
+        </a>
+        <span class="brand__sub">for Nomix Roleplay</span>
+
+        <div class="topbar__end">
+          <div class="live" id="live" role="status" data-state="connecting">
+            <span class="live__dot" aria-hidden="true"></span>
+            <span class="live__label" id="live-label">Connecting</span>
+            <span class="live__sub" id="live-sub"></span>
+          </div>
+          <button class="btn btn--icon" id="theme-toggle" type="button" aria-label="Switch to dark theme"></button>
+        </div>
+      </div>
+
+      <div class="watchbar">
+        <div class="watchbar__group">
+          <span class="eyebrow">Watching</span>
+          <span data-icon="folder" class="watchbar__icon" aria-hidden="true"></span>
+          <span class="mono watchbar__path" id="watch-path">…</span>
+        </div>
+        <div class="watchbar__group" id="ignored-group" hidden>
+          <span data-icon="ban" class="watchbar__icon" aria-hidden="true"></span>
+          <span class="eyebrow">Ignored</span>
+          <span class="watchbar__chips" id="ignored-chips"></span>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="main">
+    <div class="wrap">
+      <section class="hero" aria-labelledby="day-heading">
+        <div class="hero__text">
+          <p class="eyebrow" id="day-eyebrow">Today</p>
+          <h1 class="hero__date" id="day-heading">…</h1>
+          <p class="hero__summary" id="day-summary"></p>
+        </div>
+        <div class="hero__controls">
+          <div class="daynav">
+            <button class="btn btn--icon" id="day-prev" type="button" aria-label="Previous day" data-icon="chevron-left"></button>
+            <div class="select">
+              <label class="visually-hidden" for="day-select">Day</label>
+              <select id="day-select"></select>
+              <span class="select__chev" data-icon="chevron-down" aria-hidden="true"></span>
+            </div>
+            <button class="btn btn--icon" id="day-next" type="button" aria-label="Next day" data-icon="chevron-right"></button>
+          </div>
+          <div class="search">
+            <label class="visually-hidden" for="search">Search by file or folder</label>
+            <span class="search__icon" data-icon="search" aria-hidden="true"></span>
+            <input id="search" type="search" placeholder="Search file or folder" autocomplete="off" spellcheck="false" aria-keyshortcuts="/">
+            <kbd class="search__kbd" aria-hidden="true">/</kbd>
+          </div>
+        </div>
+      </section>
+
+      <div class="filterbar">
+        <div class="seg-scroll">
+          <div class="seg" role="radiogroup" aria-label="Filter by change type">
+            <button class="seg__btn" type="button" role="radio" data-filter="all" aria-checked="true">All <span class="seg__count" id="count-all">0</span></button>
+            <button class="seg__btn t-added" type="button" role="radio" data-filter="added" aria-checked="false"><span class="chip chip--sm" data-icon="plus" aria-hidden="true"></span>Added <span class="seg__count" id="count-added">0</span></button>
+            <button class="seg__btn t-modified" type="button" role="radio" data-filter="modified" aria-checked="false"><span class="chip chip--sm" data-icon="pencil" aria-hidden="true"></span>Modified <span class="seg__count" id="count-modified">0</span></button>
+            <button class="seg__btn t-deleted" type="button" role="radio" data-filter="deleted" aria-checked="false"><span class="chip chip--sm" data-icon="trash" aria-hidden="true"></span>Deleted <span class="seg__count" id="count-deleted">0</span></button>
+          </div>
+        </div>
+        <p class="filterbar__note">Grouped by hour · newest first</p>
+      </div>
+
+      <div class="banner" id="banner" role="alert" hidden>
+        <span class="banner__icon" data-icon="alert" aria-hidden="true"></span>
+        <div class="banner__body">
+          <strong id="banner-title"></strong>
+          <span id="banner-text"></span>
+        </div>
+        <button class="btn btn--small" id="banner-action" type="button" hidden>Retry</button>
+      </div>
+
+      <div class="timeline" id="feed" role="region" aria-label="Change feed"></div>
+    </div>
+  </main>
+
+  <footer class="footer">
+    <div class="wrap footer__row">
+      <div class="footer__brand">
+        <img class="footer__mark" src="/logo.png" width="24" height="24" alt="">
+        <span class="footer__name">Madura Logger</span>
+        <span class="muted">by Madura Scripts for Nomix Roleplay</span>
+      </div>
+      <div class="footer__key">
+        <span class="eyebrow">Status key</span>
+        <span class="key key--live"><span class="key__dot" aria-hidden="true"></span>Live</span>
+        <span class="key"><span data-icon="refresh" aria-hidden="true"></span>Scanning</span>
+        <span class="key key--bad"><span data-icon="alert" aria-hidden="true"></span>Folder not found</span>
+      </div>
+    </div>
+  </footer>
+
+  <button class="new-pill" id="new-pill" type="button" hidden>
+    <span data-icon="arrow-up" aria-hidden="true"></span>
+    <span id="new-pill-text">New changes</span>
+  </button>
+</body>
+</html>

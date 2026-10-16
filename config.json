@@ -1,0 +1,13 @@
+{
+  "watchPath": "C:\\NomixRoleplay\\Data",
+  "ignore": [
+    "C:\\NomixRoleplay\\Data\\cache",
+    "C:\\NomixRoleplay\\Data\\db"
+  ],
+  "ignorePatterns": [],
+  "logDir": "logs",
+  "host": "127.0.0.1",
+  "port": 4780,
+  "settleMs": 1000,
+  "maxWaitMs": 30000
+}

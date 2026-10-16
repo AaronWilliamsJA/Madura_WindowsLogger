@@ -1,0 +1,14 @@
+{
+  "name": "madura-logger",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Watches a folder and logs every file added, modified or deleted, with a live web UI.",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "UNLICENSED"
+}
