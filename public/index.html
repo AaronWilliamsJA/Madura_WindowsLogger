@@ -30,6 +30,7 @@
             <span class="live__label" id="live-label">Connecting</span>
             <span class="live__sub" id="live-sub"></span>
           </div>
+          <button class="btn" id="settings-open" type="button" aria-haspopup="dialog"><span data-icon="settings" aria-hidden="true"></span>Settings</button>
           <button class="btn btn--icon" id="theme-toggle" type="button" aria-label="Switch to dark theme"></button>
         </div>
       </div>
@@ -116,6 +117,81 @@
       </div>
     </div>
   </footer>
+
+  <dialog class="settings" id="settings" aria-labelledby="settings-title">
+    <form class="settings__form" id="settings-form" novalidate>
+      <header class="settings__head">
+        <div>
+          <h2 class="settings__title" id="settings-title">Settings</h2>
+          <p class="settings__lead">Choose what the logger watches. Changes apply as soon as you save, no restart needed.</p>
+        </div>
+        <button class="btn btn--icon" type="button" data-close aria-label="Close settings" data-icon="x"></button>
+      </header>
+
+      <div class="settings__body">
+        <section class="field" aria-labelledby="f-watch-label">
+          <label class="field__label" id="f-watch-label" for="f-watch">Watched folder</label>
+          <p class="field__hint">The server folder to watch, including everything inside it. For example C:\NomixRoleplay\Data</p>
+          <div class="field__row">
+            <input class="field__input mono" id="f-watch" type="text" autocomplete="off" spellcheck="false" placeholder="C:\NomixRoleplay\Data" aria-describedby="f-watch-error">
+            <button class="btn" type="button" id="f-watch-browse"><span data-icon="folder" aria-hidden="true"></span>Browse</button>
+          </div>
+          <p class="field__error" id="f-watch-error" role="alert" hidden></p>
+        </section>
+
+        <section class="field" aria-labelledby="f-ignore-label">
+          <h3 class="field__label" id="f-ignore-label">Ignored folders</h3>
+          <p class="field__hint">Folders inside the watched folder that are never recorded, like cache or db.</p>
+          <ul class="entries" id="f-ignore-list" aria-label="Ignored folders"></ul>
+          <div class="field__row">
+            <label class="visually-hidden" for="f-ignore-input">Folder to ignore</label>
+            <input class="field__input mono" id="f-ignore-input" type="text" autocomplete="off" spellcheck="false" placeholder="cache  or  resources\[test]" aria-describedby="f-ignore-error">
+            <button class="btn" type="button" id="f-ignore-add"><span data-icon="plus" aria-hidden="true"></span>Add</button>
+            <button class="btn" type="button" id="f-ignore-browse"><span data-icon="folder" aria-hidden="true"></span>Pick folder</button>
+          </div>
+          <p class="field__error" id="f-ignore-error" role="alert" hidden></p>
+        </section>
+
+        <section class="field" aria-labelledby="f-names-label">
+          <h3 class="field__label" id="f-names-label">Ignored names</h3>
+          <p class="field__hint">Files or folders with these names are skipped anywhere. * matches anything, for example *.tmp or *.log</p>
+          <ul class="entries" id="f-names-list" aria-label="Ignored names"></ul>
+          <div class="field__row">
+            <label class="visually-hidden" for="f-names-input">Name to ignore</label>
+            <input class="field__input mono" id="f-names-input" type="text" autocomplete="off" spellcheck="false" placeholder="*.tmp" aria-describedby="f-names-error">
+            <button class="btn" type="button" id="f-names-add"><span data-icon="plus" aria-hidden="true"></span>Add</button>
+          </div>
+          <p class="field__error" id="f-names-error" role="alert" hidden></p>
+        </section>
+
+        <section class="picker" id="picker" aria-labelledby="picker-title" hidden>
+          <div class="picker__head">
+            <h3 class="field__label" id="picker-title">Pick a folder</h3>
+            <button class="btn btn--small" type="button" id="picker-cancel">Cancel</button>
+          </div>
+          <div class="picker__bar">
+            <button class="btn btn--icon" type="button" id="picker-up" aria-label="Up one folder" data-icon="arrow-up"></button>
+            <code class="picker__path" id="picker-path"></code>
+          </div>
+          <ul class="picker__list" id="picker-list" aria-label="Folders"></ul>
+          <p class="picker__note" id="picker-note" hidden></p>
+          <div class="picker__foot">
+            <button class="btn btn--primary" type="button" id="picker-choose">Use this folder</button>
+          </div>
+        </section>
+      </div>
+
+      <footer class="settings__foot">
+        <p class="settings__note">Saved in config.json on the server. Past change logs are kept.</p>
+        <div class="settings__actions">
+          <button class="btn" type="button" data-close>Cancel</button>
+          <button class="btn btn--primary" type="submit" id="settings-save">Save changes</button>
+        </div>
+      </footer>
+    </form>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" hidden></div>
 
   <button class="new-pill" id="new-pill" type="button" hidden>
     <span data-icon="arrow-up" aria-hidden="true"></span>

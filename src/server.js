@@ -1,9 +1,11 @@
 'use strict';
 
 const http = require('node:http');
+const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const path = require('node:path');
 const { localDay, DAY_RE } = require('./changelog');
+const { displayIgnores, SettingsError } = require('./config');
 
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 const STATIC = {
@@ -27,8 +29,12 @@ const SECURITY_HEADERS = {
 const LOOPBACK_NAMES = new Set(['localhost', '127.0.0.1', '::1']);
 const HEARTBEAT_MS = 20000;
 const MAX_PATH_QUERY = 2048;
+const MAX_BODY = 64 * 1024;
+const MAX_FOLDERS = 1000;
+// Sent only by our own page. A cross-site page cannot add it without a CORS preflight, which we never approve.
+const WRITE_HEADER = 'x-madura-request';
 
-function createServer({ host, port, watcher, changelog, ignored, startedAt, log }) {
+function createServer({ host, port, config, getWatcher, applySettings, changelog, startedAt, log }) {
   const clients = new Set();
   // Bound to this machine only: also refuse other Host names, which blocks DNS-rebinding pages.
   const loopbackOnly = LOOPBACK_NAMES.has(host);
@@ -47,11 +53,14 @@ function createServer({ host, port, watcher, changelog, ignored, startedAt, log 
   heartbeat.unref();
 
   function status() {
+    const watcher = getWatcher();
     return {
-      watchPath: watcher.root,
-      ignored,
-      state: watcher.status.state,
-      message: watcher.status.message,
+      configured: Boolean(config.watchPath),
+      watchPath: config.watchPath,
+      ignored: displayIgnores(config.watchPath, config.ignore),
+      ignorePatterns: config.ignorePatterns,
+      state: watcher ? watcher.status.state : config.watchPath ? 'starting' : 'unconfigured',
+      message: watcher ? watcher.status.message : config.watchPath ? 'Starting' : 'Choose a folder to watch in Settings',
       startedAt,
       today: localDay(),
     };
@@ -61,12 +70,14 @@ function createServer({ host, port, watcher, changelog, ignored, startedAt, log 
     if (loopbackOnly && !isLoopbackHost(req.headers.host)) {
       return sendJson(res, 403, { error: 'Forbidden host' });
     }
+    const url = new URL(req.url, 'http://localhost');
+
+    if (req.method === 'POST' && url.pathname === '/api/settings') return saveSettingsRoute(req, res);
     if (req.method !== 'GET') {
-      res.setHeader('Allow', 'GET');
+      res.setHeader('Allow', url.pathname === '/api/settings' ? 'GET, POST' : 'GET');
       return sendJson(res, 405, { error: 'Method not allowed' });
     }
 
-    const url = new URL(req.url, 'http://localhost');
     const asset = STATIC[url.pathname];
     if (asset) return sendStatic(res, asset[0], asset[1]);
 
@@ -92,9 +103,69 @@ function createServer({ host, port, watcher, changelog, ignored, startedAt, log 
       case '/api/stream':
         return openStream(req, res);
 
+      case '/api/settings':
+        return sendJson(res, 200, settingsView());
+
+      case '/api/browse':
+        return browseRoute(res, url.searchParams.get('path') || '');
+
       default:
         return sendJson(res, 404, { error: 'Not found' });
     }
+  }
+
+  function settingsView() {
+    return {
+      watchPath: config.watchPath || '',
+      ignore: displayIgnores(config.watchPath, config.ignore),
+      ignorePatterns: config.ignorePatterns,
+    };
+  }
+
+  async function saveSettingsRoute(req, res) {
+    if (req.headers[WRITE_HEADER] !== '1' || !/^application\/json\b/i.test(req.headers['content-type'] || '')) {
+      return sendJson(res, 403, { error: 'Settings can only be changed from the Madura Logger page.' });
+    }
+    let input;
+    try {
+      input = JSON.parse(await readBody(req));
+    } catch (err) {
+      return sendJson(res, 400, { error: err.code === 'TOO_LARGE' ? 'Request too large' : 'Invalid JSON' });
+    }
+    try {
+      const result = await applySettings(input);
+      return sendJson(res, 200, { ok: true, status: result, settings: settingsView() });
+    } catch (err) {
+      if (err instanceof SettingsError) return sendJson(res, 400, { error: err.message, field: err.field });
+      throw err;
+    }
+  }
+
+  // Lists sub-folders for the Settings folder picker. Empty path lists the drives.
+  async function browseRoute(res, requested) {
+    if (requested.length > MAX_PATH_QUERY) return sendJson(res, 400, { error: 'Path too long' });
+    if (!requested) return sendJson(res, 200, { path: '', parent: null, folders: listDrives() });
+    if (!path.isAbsolute(requested)) return sendJson(res, 400, { error: 'Use a full folder path' });
+
+    const dir = path.resolve(requested);
+    let dirents;
+    try {
+      dirents = await fsp.readdir(dir, { withFileTypes: true });
+    } catch (err) {
+      const code = err.code === 'ENOENT' || err.code === 'ENOTDIR' ? 404 : err.code === 'EPERM' || err.code === 'EACCES' ? 403 : 500;
+      return sendJson(res, code, { error: code === 404 ? `Folder not found: ${dir}` : `Cannot open ${dir}` });
+    }
+    const folders = dirents
+      .filter((d) => d.isDirectory() && !d.name.startsWith('$'))
+      .map((d) => d.name)
+      .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true }));
+    const parentDir = path.dirname(dir);
+    return sendJson(res, 200, {
+      path: dir,
+      parent: parentDir === dir ? '' : parentDir,
+      folders: folders.slice(0, MAX_FOLDERS),
+      truncated: folders.length > MAX_FOLDERS,
+    });
   }
 
   function openStream(req, res) {
@@ -159,6 +230,38 @@ function sendJson(res, code, data) {
     'Cache-Control': 'no-store',
   });
   res.end(body);
+}
+
+function readBody(req) {
+  return new Promise((resolve, reject) => {
+    let size = 0;
+    const chunks = [];
+    req.on('data', (chunk) => {
+      size += chunk.length;
+      if (size > MAX_BODY) {
+        reject(Object.assign(new Error('too large'), { code: 'TOO_LARGE' }));
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+    req.on('error', reject);
+  });
+}
+
+function listDrives() {
+  if (process.platform !== 'win32') return ['/'];
+  const drives = [];
+  for (let c = 65; c <= 90; c++) {
+    const root = `${String.fromCharCode(c)}:\\`;
+    try {
+      if (fs.statSync(root).isDirectory()) drives.push(root);
+    } catch {
+      // no such drive
+    }
+  }
+  return drives;
 }
 
 function sseMessage(event, data) {

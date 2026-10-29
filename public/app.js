@@ -15,6 +15,8 @@
     missing: 'Folder not found',
     error: 'Watcher error',
     stopped: 'Stopped',
+    starting: 'Starting',
+    unconfigured: 'Not set up',
   };
   const FILE_KINDS = {
     lua: 'Lua script', js: 'JavaScript', ts: 'TypeScript', json: 'JSON data', cfg: 'Config file',
@@ -46,6 +48,7 @@
     alert: '<path d="M12 4l9 16H3z"/><path d="M12 10v4"/><path d="M12 17h.01"/>',
     ban: '<circle cx="12" cy="12" r="8"/><path d="M6.5 6.5l11 11"/>',
     refresh: '<path d="M20 12a8 8 0 1 1-2.3-5.7"/><path d="M20 4v4h-4"/>',
+    settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
   };
 
   const $ = (id) => document.getElementById(id);
@@ -262,9 +265,19 @@
 
   // ---------- Data ----------
 
-  async function api(url) {
-    const res = await fetch(url, { cache: 'no-store', headers: { Accept: 'application/json' } });
-    if (!res.ok) throw new Error(`The server answered ${res.status}.`);
+  async function api(url, body) {
+    const init = { cache: 'no-store', headers: { Accept: 'application/json' } };
+    if (body !== undefined) {
+      init.method = 'POST';
+      init.headers['Content-Type'] = 'application/json';
+      init.headers['X-Madura-Request'] = '1';
+      init.body = JSON.stringify(body);
+    }
+    const res = await fetch(url, init);
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw Object.assign(new Error(data.error || `The server answered ${res.status}.`), { field: data.field });
+    }
     return res.json();
   }
 
@@ -611,8 +624,8 @@
     el.live.title = title;
 
     if (state.status) {
-      el.watchPath.textContent = state.status.watchPath;
-      const ignored = state.status.ignored || [];
+      el.watchPath.textContent = state.status.watchPath || 'Not set: open Settings';
+      const ignored = [...(state.status.ignored || []), ...(state.status.ignorePatterns || [])];
       el.ignoredGroup.hidden = !ignored.length;
       el.ignoredChips.replaceChildren(...ignored.map((p) => h('span', { class: 'ignored-chip' }, p)));
     }
@@ -626,6 +639,10 @@
     if (!state.connected && s) {
       return showBanner('warn', 'Connection lost', 'Reconnecting to the logger service. Changes made meanwhile are still being recorded.');
     }
+    if (s && s.state === 'unconfigured') {
+      return showBanner('warn', 'No folder is being watched yet',
+        'Open Settings and choose the server folder to watch, plus any folders to ignore.', openSettings, 'Open settings');
+    }
     if (s && s.state === 'missing') {
       return showBanner('error', 'Watched folder not found',
         `${s.watchPath} does not exist on this machine. Watching starts by itself as soon as it does.`);
@@ -635,13 +652,14 @@
     return undefined;
   }
 
-  function showBanner(kind, title, text, retry) {
+  function showBanner(kind, title, text, action, actionLabel = 'Retry') {
     el.banner.hidden = false;
     el.banner.classList.toggle('banner--warn', kind === 'warn');
     el.bannerTitle.textContent = title;
     el.bannerText.textContent = text;
-    el.bannerAction.hidden = !retry;
-    el.bannerAction.onclick = retry || null;
+    el.bannerAction.hidden = !action;
+    el.bannerAction.textContent = actionLabel;
+    el.bannerAction.onclick = action || null;
   }
 
   function renderNewPill() {
@@ -1034,6 +1052,271 @@
     history.replaceState(null, '', query ? `?${query}` : window.location.pathname);
   }
 
+  // ---------- Settings ----------
+
+  const sx = {
+    dialog: $('settings'),
+    form: $('settings-form'),
+    save: $('settings-save'),
+    watch: $('f-watch'),
+    watchErr: $('f-watch-error'),
+    watchBrowse: $('f-watch-browse'),
+    ignoreList: $('f-ignore-list'),
+    ignoreInput: $('f-ignore-input'),
+    ignoreErr: $('f-ignore-error'),
+    ignoreAdd: $('f-ignore-add'),
+    ignoreBrowse: $('f-ignore-browse'),
+    namesList: $('f-names-list'),
+    namesInput: $('f-names-input'),
+    namesErr: $('f-names-error'),
+    namesAdd: $('f-names-add'),
+    picker: $('picker'),
+    pickerTitle: $('picker-title'),
+    pickerPath: $('picker-path'),
+    pickerList: $('picker-list'),
+    pickerNote: $('picker-note'),
+    pickerUp: $('picker-up'),
+    pickerChoose: $('picker-choose'),
+    pickerCancel: $('picker-cancel'),
+    toast: $('toast'),
+  };
+  const draft = { ignore: [], ignorePatterns: [] };
+  const picker = { target: null, path: '', parent: null, token: 0 };
+
+  async function openSettings() {
+    clearSettingsErrors();
+    closePicker();
+    try {
+      const s = await api('/api/settings');
+      sx.watch.value = s.watchPath;
+      draft.ignore = [...s.ignore];
+      draft.ignorePatterns = [...s.ignorePatterns];
+    } catch (err) {
+      showToast(`Could not load settings. ${friendlyError(err)}`);
+      return;
+    }
+    sx.ignoreInput.value = '';
+    sx.namesInput.value = '';
+    renderEntries();
+    if (!sx.dialog.open) sx.dialog.showModal();
+    sx.watch.focus();
+  }
+
+  function closeSettings() {
+    closePicker();
+    if (sx.dialog.open) sx.dialog.close();
+  }
+
+  function renderEntries() {
+    const row = (text, list) => h('li', { class: 'entry' },
+      h('span', { class: 'entry__text', title: text }, text),
+      h('button', {
+        class: 'entry__remove',
+        type: 'button',
+        'aria-label': `Remove ${text}`,
+        onclick: () => {
+          list.splice(list.indexOf(text), 1);
+          renderEntries();
+        },
+      }, icon('x')));
+    sx.ignoreList.replaceChildren(...draft.ignore.map((t) => row(t, draft.ignore)));
+    sx.namesList.replaceChildren(...draft.ignorePatterns.map((t) => row(t, draft.ignorePatterns)));
+  }
+
+  function fieldError(input, node, message) {
+    node.textContent = message || '';
+    node.hidden = !message;
+    if (input) input.setAttribute('aria-invalid', message ? 'true' : 'false');
+  }
+
+  function clearSettingsErrors() {
+    fieldError(sx.watch, sx.watchErr, '');
+    fieldError(sx.ignoreInput, sx.ignoreErr, '');
+    fieldError(sx.namesInput, sx.namesErr, '');
+  }
+
+  const trimPath = (value) => value.trim().replace(/^"(.*)"$/, '$1').replace(/[\\/]+$/, '');
+  const isAbsolutePath = (value) => /^[a-z]:[\\/]/i.test(value) || value.startsWith('\\\\') || value.startsWith('/');
+
+  // Folders inside the watched folder are kept relative to it ("cache", "resources\[test]").
+  function relativeToWatch(value) {
+    const root = trimPath(sx.watch.value);
+    if (!isAbsolutePath(value)) return value.replace(/\//g, '\\').replace(/^\\+/, '');
+    if (!root) return null;
+    const a = value.replace(/\//g, '\\').toLowerCase();
+    const b = root.replace(/\//g, '\\').toLowerCase();
+    if (!a.startsWith(`${b}\\`)) return null;
+    return value.slice(root.length + 1).replace(/\//g, '\\');
+  }
+
+  function addIgnore(raw) {
+    const value = trimPath(raw);
+    if (!value) return true;
+    const rel = relativeToWatch(value);
+    if (!rel) {
+      fieldError(sx.ignoreInput, sx.ignoreErr, `"${value}" is not inside the watched folder.`);
+      return false;
+    }
+    if (!draft.ignore.some((x) => x.toLowerCase() === rel.toLowerCase())) draft.ignore.push(rel);
+    fieldError(sx.ignoreInput, sx.ignoreErr, '');
+    sx.ignoreInput.value = '';
+    renderEntries();
+    return true;
+  }
+
+  function addName(raw) {
+    const value = raw.trim();
+    if (!value) return true;
+    if (/[\\/]/.test(value)) {
+      fieldError(sx.namesInput, sx.namesErr, 'Use a name like *.tmp here. Add folders under Ignored folders.');
+      return false;
+    }
+    if (!draft.ignorePatterns.some((x) => x.toLowerCase() === value.toLowerCase())) draft.ignorePatterns.push(value);
+    fieldError(sx.namesInput, sx.namesErr, '');
+    sx.namesInput.value = '';
+    renderEntries();
+    return true;
+  }
+
+  async function saveSettings(ev) {
+    ev.preventDefault();
+    clearSettingsErrors();
+    // Text typed but not yet added still counts.
+    if (!addIgnore(sx.ignoreInput.value) || !addName(sx.namesInput.value)) return;
+
+    sx.save.disabled = true;
+    sx.save.textContent = 'Saving…';
+    try {
+      const result = await api('/api/settings', {
+        watchPath: trimPath(sx.watch.value),
+        ignore: draft.ignore,
+        ignorePatterns: draft.ignorePatterns,
+      });
+      state.status = result.status;
+      state.history.clear();
+      renderStatus();
+      closeSettings();
+      showToast(`Saved. Now watching ${result.settings.watchPath}`);
+    } catch (err) {
+      const target = err.field === 'ignore' ? [sx.ignoreInput, sx.ignoreErr]
+        : err.field === 'ignorePatterns' ? [sx.namesInput, sx.namesErr]
+          : [sx.watch, sx.watchErr];
+      fieldError(target[0], target[1], friendlyError(err));
+      target[0].focus();
+    } finally {
+      sx.save.disabled = false;
+      sx.save.textContent = 'Save changes';
+    }
+  }
+
+  // ---------- Folder picker ----------
+
+  function openPicker(target) {
+    picker.target = target;
+    sx.pickerTitle.textContent = target === 'watch' ? 'Pick the folder to watch' : 'Pick a folder to ignore';
+    sx.picker.hidden = false;
+    const root = trimPath(sx.watch.value);
+    if (target === 'ignore' && !root) {
+      sx.picker.hidden = true;
+      fieldError(sx.watch, sx.watchErr, 'Choose the watched folder first.');
+      sx.watch.focus();
+      return;
+    }
+    loadPicker(root && isAbsolutePath(root) ? root : '');
+    sx.picker.scrollIntoView({ block: 'nearest' });
+  }
+
+  function closePicker() {
+    picker.token++;
+    sx.picker.hidden = true;
+  }
+
+  async function loadPicker(dir) {
+    const token = ++picker.token;
+    sx.pickerNote.hidden = true;
+    sx.pickerPath.textContent = dir || 'This PC';
+    sx.pickerList.replaceChildren(h('li', { class: 'picker__note' }, 'Loading…'));
+    let data;
+    try {
+      data = await api(`/api/browse?path=${encodeURIComponent(dir)}`);
+    } catch (err) {
+      if (token !== picker.token) return;
+      if (dir) return loadPicker(''); // gone or unreadable: start again from the drives
+      sx.pickerList.replaceChildren();
+      sx.pickerNote.textContent = friendlyError(err);
+      sx.pickerNote.hidden = false;
+      return;
+    }
+    if (token !== picker.token) return;
+
+    picker.path = data.path;
+    picker.parent = data.parent;
+    sx.pickerPath.textContent = data.path || 'This PC';
+    sx.pickerUp.disabled = data.parent === null;
+    sx.pickerChoose.disabled = !data.path;
+
+    const child = (name) => {
+      if (!data.path) return name;
+      const sep = data.path.includes('\\') || !data.path.includes('/') ? '\\' : '/';
+      return data.path.endsWith(sep) ? data.path + name : `${data.path}${sep}${name}`;
+    };
+    sx.pickerList.replaceChildren(...data.folders.map((name) => h('li', null,
+      h('button', { class: 'picker__item', type: 'button', onclick: () => loadPicker(child(name)) },
+        icon('folder'), h('span', null, name)))));
+    if (!data.folders.length) {
+      sx.pickerNote.textContent = data.path ? 'No folders inside.' : 'No drives found.';
+      sx.pickerNote.hidden = false;
+    } else if (data.truncated) {
+      sx.pickerNote.textContent = 'Showing the first 1,000 folders.';
+      sx.pickerNote.hidden = false;
+    }
+  }
+
+  function choosePicked() {
+    if (!picker.path) return;
+    if (picker.target === 'watch') {
+      sx.watch.value = picker.path;
+      fieldError(sx.watch, sx.watchErr, '');
+      closePicker();
+      sx.watch.focus();
+    } else if (addIgnore(picker.path)) {
+      closePicker();
+      sx.ignoreInput.focus();
+    }
+  }
+
+  function showToast(message) {
+    sx.toast.textContent = message;
+    sx.toast.hidden = false;
+    clearTimeout(showToast.timer);
+    showToast.timer = setTimeout(() => { sx.toast.hidden = true; }, 4000);
+  }
+
+  function bindSettings() {
+    $('settings-open').addEventListener('click', openSettings);
+    for (const btn of sx.dialog.querySelectorAll('[data-close]')) btn.addEventListener('click', closeSettings);
+    sx.dialog.addEventListener('click', (ev) => { if (ev.target === sx.dialog) closeSettings(); });
+    sx.form.addEventListener('submit', saveSettings);
+
+    sx.ignoreAdd.addEventListener('click', () => addIgnore(sx.ignoreInput.value));
+    sx.namesAdd.addEventListener('click', () => addName(sx.namesInput.value));
+    const enterAdds = (input, add) => input.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter') {
+        ev.preventDefault();
+        add(input.value);
+      }
+    });
+    enterAdds(sx.ignoreInput, addIgnore);
+    enterAdds(sx.namesInput, addName);
+    sx.watch.addEventListener('input', () => fieldError(sx.watch, sx.watchErr, ''));
+
+    sx.watchBrowse.addEventListener('click', () => openPicker('watch'));
+    sx.ignoreBrowse.addEventListener('click', () => openPicker('ignore'));
+    sx.pickerUp.addEventListener('click', () => { if (picker.parent !== null) loadPicker(picker.parent); });
+    sx.pickerChoose.addEventListener('click', choosePicked);
+    sx.pickerCancel.addEventListener('click', closePicker);
+  }
+
   // ---------- Wiring ----------
 
   function isTyping(target) {
@@ -1049,6 +1332,7 @@
   }
 
   function bindEvents() {
+    bindSettings();
     el.themeToggle.addEventListener('click', toggleTheme);
     darkQuery.addEventListener('change', renderThemeButton);
 
@@ -1082,6 +1366,7 @@
     }, { passive: true });
 
     document.addEventListener('keydown', (ev) => {
+      if (sx.dialog.open) return; // the settings dialog handles its own keys (Esc closes it)
       if (ev.key === '/' && !isTyping(ev.target) && !ev.ctrlKey && !ev.metaKey && !ev.altKey) {
         ev.preventDefault();
         el.search.focus();

@@ -19,8 +19,8 @@ Watches a folder on Windows and records every file or folder that is **added**, 
 
 ## Setup
 
-1. Edit `config.json`: set `watchPath` to the folder to watch, and list folders to skip in `ignore`.
-2. Double-click `start.bat`. The UI opens at http://localhost:4780.
+1. Double-click `start.bat`. The UI opens at http://localhost:4780.
+2. Click **Settings** in the top bar. Choose the folder to watch, the folders to ignore (like `cache` and `db`) and any file names to skip (like `*.tmp`), then save. Watching restarts straight away; no file editing needed.
 3. To run it in the background from Windows startup, run this once in an administrator PowerShell:
 
    ```powershell
@@ -31,11 +31,13 @@ Watches a folder on Windows and records every file or folder that is **added**, 
 
 ## Configuration
 
+The watched folder, ignored folders and ignored names are managed in the web UI's Settings, which saves them to `config.json`. The other keys are for the server itself and rarely change; edit `config.json` and restart the logger for those.
+
 | Key | Default | Meaning |
 |---|---|---|
-| `watchPath` | (required) | Folder to watch |
-| `ignore` | `[]` | Folders inside `watchPath` to skip (absolute or relative) |
-| `ignorePatterns` | `[]` | File or folder names to skip, `*` and `?` allowed |
+| `watchPath` | (set in Settings) | Folder to watch |
+| `ignore` | `[]` | Folders inside `watchPath` to skip (set in Settings) |
+| `ignorePatterns` | `[]` | File or folder names to skip, `*` and `?` allowed (set in Settings) |
 | `logDir` | `logs` | Where daily log files are written |
 | `host` | `127.0.0.1` | Address the UI listens on (`0.0.0.0` for other PCs) |
 | `port` | `4780` | UI port |

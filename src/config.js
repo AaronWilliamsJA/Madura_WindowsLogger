@@ -37,13 +37,14 @@ function loadConfig(configPath) {
   const cfg = { ...DEFAULTS, ...parsed };
   const baseDir = path.dirname(file);
 
-  if (typeof cfg.watchPath !== 'string' || !cfg.watchPath.trim()) {
-    throw new ConfigError('"watchPath" is required, e.g. "C:\\\\NomixRoleplay\\\\Data"');
+  // The watched folder is normally chosen in the web UI's Settings; an empty value just means "not set up yet".
+  if (cfg.watchPath == null || (typeof cfg.watchPath === 'string' && !cfg.watchPath.trim())) {
+    cfg.watchPath = null;
+  } else if (typeof cfg.watchPath !== 'string' || !path.isAbsolute(cfg.watchPath)) {
+    throw new ConfigError(`"watchPath" must be an absolute path, got ${JSON.stringify(cfg.watchPath)}`);
+  } else {
+    cfg.watchPath = path.resolve(cfg.watchPath);
   }
-  if (!path.isAbsolute(cfg.watchPath)) {
-    throw new ConfigError(`"watchPath" must be an absolute path, got "${cfg.watchPath}"`);
-  }
-  cfg.watchPath = path.resolve(cfg.watchPath);
 
   cfg.ignore = stringList(cfg.ignore, 'ignore');
   cfg.ignorePatterns = stringList(cfg.ignorePatterns, 'ignorePatterns');
@@ -77,4 +78,122 @@ function integerIn(value, name, min, max) {
   return value;
 }
 
-module.exports = { loadConfig, ConfigError, PROJECT_ROOT };
+// ---------- Settings edited from the web UI ----------
+
+const MAX_ENTRIES = 200;
+const MAX_TEXT = 1024;
+
+class SettingsError extends Error {
+  constructor(message, field) {
+    super(message);
+    this.field = field;
+  }
+}
+
+/**
+ * Checks what the Settings form sent and returns the cleaned values:
+ * { watchPath, ignore: [paths relative to watchPath], ignorePatterns: [names] }.
+ * Throws SettingsError with the offending field.
+ */
+function normalizeSettings(input, { logDir }) {
+  if (!input || typeof input !== 'object') throw new SettingsError('Invalid settings', 'watchPath');
+
+  const rawWatch = typeof input.watchPath === 'string' ? input.watchPath.trim().replace(/^"(.*)"$/, '$1') : '';
+  if (!rawWatch) throw new SettingsError('Choose the folder to watch.', 'watchPath');
+  if (rawWatch.length > MAX_TEXT || !path.isAbsolute(rawWatch)) {
+    throw new SettingsError('Use a full folder path, for example C:\\NomixRoleplay\\Data', 'watchPath');
+  }
+  const watchPath = path.resolve(rawWatch);
+  let st;
+  try {
+    st = fs.statSync(watchPath);
+  } catch {
+    throw new SettingsError(`Folder not found: ${watchPath}`, 'watchPath');
+  }
+  if (!st.isDirectory()) throw new SettingsError(`Not a folder: ${watchPath}`, 'watchPath');
+  if (path.parse(watchPath).root === watchPath) {
+    throw new SettingsError('Watching a whole drive is too broad. Pick the server folder instead.', 'watchPath');
+  }
+  if (isSameOrInside(watchPath, logDir)) {
+    throw new SettingsError('That is the logger\'s own log folder (or inside it). Pick the server folder.', 'watchPath');
+  }
+
+  const ignore = [];
+  const seen = new Set();
+  for (const entry of list(input.ignore, 'ignore')) {
+    const abs = path.isAbsolute(entry) ? path.resolve(entry) : path.resolve(watchPath, entry);
+    const rel = path.relative(watchPath, abs);
+    if (!rel || rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) {
+      throw new SettingsError(`"${entry}" is not inside the watched folder.`, 'ignore');
+    }
+    const key = rel.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    ignore.push(rel);
+  }
+
+  const ignorePatterns = [];
+  const seenNames = new Set();
+  for (const entry of list(input.ignorePatterns, 'ignorePatterns')) {
+    if (/[\\/]/.test(entry)) {
+      throw new SettingsError(`"${entry}" should be a name like *.tmp, not a path. Add folders under Ignored folders.`, 'ignorePatterns');
+    }
+    const key = entry.toLowerCase();
+    if (seenNames.has(key)) continue;
+    seenNames.add(key);
+    ignorePatterns.push(entry);
+  }
+
+  return { watchPath, ignore, ignorePatterns };
+}
+
+function list(value, field) {
+  if (value == null) return [];
+  if (!Array.isArray(value) || value.length > MAX_ENTRIES) {
+    throw new SettingsError(`Too many entries (max ${MAX_ENTRIES}).`, field);
+  }
+  const out = [];
+  for (const v of value) {
+    if (typeof v !== 'string') throw new SettingsError('Entries must be text.', field);
+    const t = v.trim().replace(/^"(.*)"$/, '$1').replace(/[\\/]+$/, '');
+    if (!t) continue;
+    if (t.length > MAX_TEXT) throw new SettingsError('An entry is too long.', field);
+    out.push(t);
+  }
+  return out;
+}
+
+// Writes the three UI-managed keys into config.json, keeping every other key as it is.
+function saveSettings(configPath, settings) {
+  const file = path.resolve(configPath);
+  let current = {};
+  try {
+    current = JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, ''));
+  } catch (err) {
+    if (err.code !== 'ENOENT') throw new ConfigError(`Cannot update ${file}: ${err.message}`);
+  }
+  const next = { ...current, watchPath: settings.watchPath, ignore: settings.ignore, ignorePatterns: settings.ignorePatterns };
+  const tmp = `${file}.tmp`;
+  fs.writeFileSync(tmp, `${JSON.stringify(next, null, 2)}\n`, 'utf8');
+  fs.renameSync(tmp, file);
+}
+
+// Ignore entries as the UI shows them: relative to the watched folder when they are inside it.
+function displayIgnores(watchPath, ignore) {
+  if (!watchPath) return ignore;
+  return ignore.map((entry) => {
+    if (!path.isAbsolute(entry)) return entry;
+    const rel = path.relative(watchPath, path.resolve(entry));
+    return rel && !rel.startsWith('..') && !path.isAbsolute(rel) ? rel : entry;
+  });
+}
+
+function isSameOrInside(child, parent) {
+  const rel = path.relative(parent, child);
+  return !rel.startsWith('..') && !path.isAbsolute(rel);
+}
+
+module.exports = {
+  loadConfig, ConfigError, PROJECT_ROOT,
+  normalizeSettings, saveSettings, displayIgnores, SettingsError,
+};

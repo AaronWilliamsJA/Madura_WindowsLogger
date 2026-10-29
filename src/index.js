@@ -2,7 +2,7 @@
 
 const path = require('node:path');
 const { spawn } = require('node:child_process');
-const { loadConfig, ConfigError, PROJECT_ROOT } = require('./config');
+const { loadConfig, ConfigError, PROJECT_ROOT, normalizeSettings, saveSettings } = require('./config');
 const { createDiagnostics } = require('./diagnostics');
 const { FolderWatcher } = require('./watcher');
 const { ChangeLog } = require('./changelog');
@@ -15,43 +15,82 @@ async function main() {
   const configPath = optionValue(args, '--config') || path.join(PROJECT_ROOT, 'config.json');
   const config = loadConfig(configPath);
 
-  if (samePath(config.logDir, config.watchPath)) {
+  if (config.watchPath && samePath(config.logDir, config.watchPath)) {
     throw new ConfigError('"logDir" cannot be the watched folder itself');
   }
-  // Never watch our own log files, or every write would log itself.
-  const ignore = [...config.ignore];
-  if (isInside(config.logDir, config.watchPath)) ignore.push(config.logDir);
 
   const changelog = new ChangeLog({ dir: config.logDir });
   await changelog.init();
 
-  const watcher = new FolderWatcher({
-    root: config.watchPath,
-    ignore,
-    ignorePatterns: config.ignorePatterns,
-    settleMs: config.settleMs,
-    maxWaitMs: config.maxWaitMs,
-  });
-  for (const entry of watcher.rejectedIgnores) {
-    diag.warn(`Ignore entry "${entry}" is not inside ${config.watchPath}; skipped`);
+  let watcher = null;
+  let server = null;
+
+  function createWatcher() {
+    // Never watch our own log files, or every write would log itself.
+    const ignore = [...config.ignore];
+    if (isInside(config.logDir, config.watchPath)) ignore.push(config.logDir);
+
+    const w = new FolderWatcher({
+      root: config.watchPath,
+      ignore,
+      ignorePatterns: config.ignorePatterns,
+      settleMs: config.settleMs,
+      maxWaitMs: config.maxWaitMs,
+    });
+    for (const entry of w.rejectedIgnores) {
+      diag.warn(`Ignore entry "${entry}" is not inside ${config.watchPath}; skipped`);
+    }
+    w.on('changes', (changes) => changelog.append(changes));
+    w.on('state', ({ state, message }) => {
+      if (w !== watcher) return; // a replaced watcher shutting down
+      (state === 'error' || state === 'missing' ? diag.warn : diag.info)(`Watcher ${state}${message ? `: ${message}` : ''}`);
+      server.broadcast('status', server.status());
+    });
+    w.on('warn', (msg) => diag.warn(msg));
+    return w;
   }
 
-  const server = createServer({
+  function describeWatch() {
+    if (!config.watchPath) return 'No folder set yet: choose one in Settings';
+    const skipped = [...config.ignore, ...config.ignorePatterns];
+    return `Watching ${config.watchPath}${skipped.length ? ` (ignoring ${skipped.join(', ')})` : ''}`;
+  }
+
+  // Settings saved from the web UI: write config.json, then swap the watcher without restarting the service.
+  let settingsQueue = Promise.resolve();
+  function applySettings(input) {
+    const run = settingsQueue.then(async () => {
+      const next = normalizeSettings(input, { logDir: config.logDir });
+      saveSettings(configPath, next);
+      Object.assign(config, next);
+      diag.info(`Settings changed from the web UI. ${describeWatch()}`);
+
+      const old = watcher;
+      watcher = null;
+      if (old) {
+        await old.stop();
+        old.removeAllListeners();
+      }
+      watcher = createWatcher();
+      watcher.start().catch((err) => diag.error(`Watcher failed to start: ${err.message}`));
+      server.broadcast('status', server.status());
+      return server.status();
+    });
+    settingsQueue = run.catch(() => {});
+    return run;
+  }
+
+  server = createServer({
     host: config.host,
     port: config.port,
-    watcher,
+    config,
+    getWatcher: () => watcher,
+    applySettings,
     changelog,
-    ignored: config.ignore,
     startedAt: Date.now(),
     log: diag,
   });
 
-  watcher.on('changes', (changes) => changelog.append(changes));
-  watcher.on('state', ({ state, message }) => {
-    (state === 'error' || state === 'missing' ? diag.warn : diag.info)(`Watcher ${state}${message ? `: ${message}` : ''}`);
-    server.broadcast('status', server.status());
-  });
-  watcher.on('warn', (msg) => diag.warn(msg));
   changelog.on('entries', (entries) => server.broadcast('changes', entries));
   changelog.on('warn', (err) => diag.error(`Could not write the change log: ${err.message}`));
 
@@ -67,7 +106,7 @@ async function main() {
   const shownHost = config.host === '0.0.0.0' || config.host === '::' ? 'localhost' : config.host;
   const url = `http://${shownHost.includes(':') ? `[${shownHost}]` : shownHost}:${config.port}`;
   diag.info(`Madura Logger ${require('../package.json').version} started`);
-  diag.info(`Watching ${config.watchPath}${config.ignore.length ? ` (ignoring ${config.ignore.join(', ')})` : ''}`);
+  diag.info(describeWatch());
   diag.info(`Change logs in ${config.logDir}`);
   diag.info(`UI at ${url}`);
 
@@ -80,7 +119,7 @@ async function main() {
     if (stopping) return;
     stopping = true;
     diag.info(`Stopping (${reason})`);
-    await watcher.stop();
+    if (watcher) await watcher.stop();
     await changelog.flush();
     await server.close();
     process.exit(0);
@@ -89,7 +128,10 @@ async function main() {
     process.on(signal, () => shutdown(signal));
   }
 
-  await watcher.start();
+  if (config.watchPath) {
+    watcher = createWatcher();
+    await watcher.start();
+  }
 }
 
 function optionValue(args, name) {
